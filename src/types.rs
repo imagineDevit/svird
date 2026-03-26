@@ -1,6 +1,6 @@
 use crate::errors::DriverLaunchError;
 
-pub type LaunchResult<T> = Result<T, DriverLaunchError>;
+pub type LaunchResult<T> = anyhow::Result<T>;
 
 #[derive(Clone)]
 pub enum Browsers {

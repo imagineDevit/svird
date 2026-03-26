@@ -1,99 +1,18 @@
 
-
 mod types;
-mod errors;
+
 mod constants;
+mod utils;
+mod utils_tests;
 
-use crate::errors::DriverLaunchError;
-use crate::errors::DriverLaunchError::CreateDriverError;
 use crate::types::{Browsers, LaunchResult};
-use crate::constants::*;
-
-use serde_json::to_value;
 
 use std::error::Error;
 use std::fmt::Debug;
-use std::fs::File;
-use std::io::Write;
 use std::process::Command;
-use std::{env, fs};
-
-use thirtyfour::prelude::*;
-
-/// Create the selenium-manager executable file
-fn create_manager_file() -> LaunchResult<()> {
-    let mut manager_file = File::create(SELENIUM_MANAGER_PATH)?;
-
-    manager_file.write_all(SELENIUM_DATA)?;
-
-    let dir = env::current_dir()?;
-
-    let manager_path = dir.join(SELENIUM_MANAGER_PATH);
-
-    Command::new("chmod")
-        .arg("+x")
-        .arg(manager_path.clone())
-        .output()?;
-
-    Ok(())
-}
-
-/// Create the driver executable file using the selenium-manager executable
-///
-/// And returns the path of the created driver
-fn create_driver(browser: Browsers) -> LaunchResult<Option<String>> {
-    create_manager_file()?;
-
-    if !fs::exists(CACHE_PATH)? {
-        fs::create_dir(CACHE_PATH)?;
-    }
-
-    let result = Command::new(format!("./{}", SELENIUM_MANAGER_PATH))
-        .args(&[
-            "--browser",
-            browser.as_str(),
-            "--cache-path",
-            CACHE_PATH,
-            "--ttl",
-            THIRTY_DAYS.to_string().as_str(),
-        ])
-        .output()?;
-
-    let regex = regex::Regex::new(r"Driver path: (?<path>[^\r\n]+)")?;
-
-    regex
-        .captures(String::from_utf8_lossy(&result.stdout).as_ref())
-        .map(|caps| caps.name("path"))
-        .map(|om| om.map(|m| m.as_str().to_string()))
-        .ok_or(CreateDriverError("Driver path not found".to_string()))
-}
-
-async fn check_port_available(port: u16) -> LaunchResult<bool> {
-    match tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
-}
-
-/// Add browser options to browser capabilities
-pub(crate) fn add_args<T>(capabilities: Vec<(&str, Option<&str>)>, caps: &mut T) -> LaunchResult<()>
-where
-    T: BrowserCapabilitiesHelper,
-{
-    if capabilities.len() > 0 {
-        let args = capabilities
-            .into_iter()
-            .map(|(key, value)| match value {
-                None => key.to_string(),
-                Some(value) => format!("{key}={value}"),
-            })
-            .collect::<Vec<String>>();
-
-        caps.insert_browser_option("args", to_value(args)?)?;
-    }
-
-    Ok(())
-}
+use anyhow::anyhow;
+use thirtyfour::{Capabilities, DesiredCapabilities, WebDriver};
+use crate::utils::{add_args, check_port_available, create_driver};
 
 /// Run a driver on the given port and with the given capabilities
 ///
@@ -115,7 +34,7 @@ where
     let port_available = check_port_available(port).await?;
 
     if !port_available {
-        return Err(CreateDriverError(format!(
+        return Err(anyhow!(format!(
             "Port {} is already in use",
             port
         )));
@@ -157,7 +76,7 @@ where
         }
 
         match driver {
-            None => Err(CreateDriverError(format!(
+            None => Err(anyhow!(format!(
                 "Failed to run the driver after {} secondes",
                 timeout_in_seconds
             ))),
@@ -170,21 +89,19 @@ where
                     log::error!("Error while executing the driver => {}", e);
                     command.await.unwrap()?.kill()?;
                     driver.quit().await?;
-                    Err(DriverLaunchError::DriverExecError(e.to_string()))
+                    Err(anyhow!(e.to_string()))
                 }
             },
         }
     } else {
-        Err(DriverLaunchError::RunDriverError(
-            "Driver path not found".to_string(),
-        ))
+        Err(anyhow!("Driver path not found".to_string()))
     }
 }
 
 /// Run a chrome driver
 ///
 /// ```no_run
-/// use driver_launcher::prelude::*;
+/// use svird::prelude::*;
 ///
 /// #[tokio::main]
 /// async fn main() {
@@ -217,8 +134,8 @@ where
 
 /// Run a firefox driver
 ///
-/// ```
-/// use driver_launcher::prelude::*;
+/// ```no_run
+/// use svird::prelude::*;
 ///
 /// #[tokio::main]
 /// async fn main() {
@@ -251,8 +168,8 @@ where
 
 /// Run an edge driver
 ///
-/// ```
-/// use driver_launcher::prelude::*;
+/// ```no_run
+/// use svird::prelude::*;
 ///
 /// #[tokio::main]
 /// async fn main() {
@@ -285,8 +202,8 @@ where
 
 /// Run a safari driver
 ///
-/// ```
-/// use driver_launcher::prelude::*;
+/// ```no_run
+/// use svird::prelude::*;
 ///
 /// #[tokio::main]
 /// async fn main() {
@@ -322,7 +239,6 @@ where
 
 
 pub mod prelude {
-    pub use crate::errors::DriverLaunchError;
     pub use crate::run_chrome_driver;
     pub use crate::run_edge_driver;
     pub use crate::run_firefox_driver;
